@@ -4,11 +4,12 @@ import math
 import matplotlib.pyplot as plt
 
 
-URL = "https://data.iledefrance-mobilites.fr/api/explore/v2.1/catalog/datasets/"
 VALIDATIONS_JOUR = "https://data.iledefrance-mobilites.fr/api/explore/v2.1/catalog/datasets/validations-reseau-ferre-nombre-validations-par-jour-2eme-trimestre/exports/csv?delimiter=;"
 VALIDATIONS_HEURE = "https://data.iledefrance-mobilites.fr/api/explore/v2.1/catalog/datasets/validations-reseau-ferre-profils-horaires-par-jour-type-3eme-trimestre/exports/csv?delimiter=;"
+
+
 def charger(validations):
-    df = pd.read_csv(URL + validations + "/exports/csv?delimiter=;", sep=";")
+    df = pd.read_csv(validations, sep=";")
     return df
 
 
@@ -53,6 +54,13 @@ def stations_par_jour(df):
     return noms, dates, stations
 
 
+def trouver_colonne(df, debut):
+    for nom in df.columns:
+        if nom.startswith(debut):
+            return nom
+    return None
+
+
 def stations_par_heure(df, noms, moyennes, type_jour):
     numero_nom = numeroter(noms)
 
@@ -66,7 +74,10 @@ def stations_par_heure(df, noms, moyennes, type_jour):
     col_cat = list(df["cat_jour"])
     col_noms = list(df["libelle_arret"])
     col_heures = list(df["trnc_horr_60"])
-    col_pourcentages = list(df["pourc_validations"])
+    colonne = trouver_colonne(df, "pourc")
+    if colonne is None:
+        print(list(df.columns))
+    col_pourcentages = list(df[colonne])
     for i in range(len(col_cat)):
         p = convertir(col_pourcentages[i])
         tranche = str(col_heures[i])
@@ -144,7 +155,6 @@ def tracer_profil_station(station, nom):
     plt.title("Profil horaire : " + nom)
     plt.tight_layout()
     plt.show()
-
 
 
 df_jour = charger(VALIDATIONS_JOUR)
