@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 
 VALIDATIONS_JOUR = "https://data.iledefrance-mobilites.fr/api/explore/v2.1/catalog/datasets/validations-reseau-ferre-nombre-validations-par-jour-2eme-trimestre/exports/csv?delimiter=;"
-VALIDATIONS_HEURE = "https://data.iledefrance-mobilites.fr/api/explore/v2.1/catalog/datasets/validations-reseau-ferre-profils-horaires-par-jour-type-3eme-trimestre/exports/csv?delimiter=;"
+VALIDATIONS_HEURE = "https://data.iledefrance-mobilites.fr/api/explore/v2.1/catalog/datasets/validations-reseau-ferre-profils-horaires-par-jour-type-2eme-trimestre/exports/csv?delimiter=;"
 
 
 def charger(validations):
