@@ -1,7 +1,5 @@
 import pandas as pd
-import numpy as np
-import math
-import matplotlib.pyplot as plt
+import plotly.express as px
 
 
 VALIDATIONS_JOUR = "https://data.iledefrance-mobilites.fr/api/explore/v2.1/catalog/datasets/validations-reseau-ferre-nombre-validations-par-jour-2eme-trimestre/exports/csv?delimiter=;"
@@ -9,48 +7,23 @@ VALIDATIONS_HEURE = "https://data.iledefrance-mobilites.fr/api/explore/v2.1/cata
 
 
 def charger(validations):
-    df = pd.read_csv(validations, sep=";")
+    df = pd.read_csv(validations, sep=";", low_memory=False)
     return df
 
 
 def convertir(valeur):
-    try:
-        x = float(str(valeur).replace(",", "."))
-    except ValueError:
-        return None
-    if math.isnan(x):
-        return None
-    return x
-
-
-def numeroter(liste):
-    numero = {}
-    for i in range(len(liste)):
-        numero[liste[i]] = i
-    return numero
+    # "12,5" -> 12.5 ; tout ce qui n'est pas un nombre devient NaN
+    return pd.to_numeric(valeur.astype(str).str.replace(",", "."), errors="coerce")
 
 
 def stations_par_jour(df):
-    noms = list(set(df["libelle_arret"]))
-    dates = list(set(df["jour"]))
-    dates.sort()
-    numero_nom = numeroter(noms)
-    numero_date = numeroter(dates)
-
-    stations = []
-    for i in range(len(noms)):
-        station = []
-        for j in range(len(dates)):
-            station.append([])
-        stations.append(station)
-
-    col_noms = list(df["libelle_arret"])
-    col_dates = list(df["jour"])
-    col_validations = list(df["nb_vald"])
-    for i in range(len(col_noms)):
-        v = convertir(col_validations[i])
-        if v is not None:
-            stations[numero_nom[col_noms[i]]][numero_date[col_dates[i]]].append(v)
+    # Une ligne de l'API = une station, un jour, une catégorie de titre :
+    # on additionne toutes les catégories pour avoir le total du jour.
+    df = df[df["libelle_arret"] != "Inconnu"].copy()
+    df["nb_vald"] = convertir(df["nb_vald"])
+    stations = df.pivot_table(index="libelle_arret", columns="jour", values="nb_vald", aggfunc="sum", fill_value=0)
+    noms = list(stations.index)
+    dates = list(stations.columns)
     return noms, dates, stations
 
 
@@ -62,63 +35,31 @@ def trouver_colonne(df, debut):
 
 
 def stations_par_heure(df, noms, moyennes, type_jour):
-    numero_nom = numeroter(noms)
-
-    stations = []
-    for i in range(len(noms)):
-        station = []
-        for h in range(24):
-            station.append([])
-        stations.append(station)
-
-    col_cat = list(df["cat_jour"])
-    col_noms = list(df["libelle_arret"])
-    col_heures = list(df["trnc_horr_60"])
     colonne = trouver_colonne(df, "pourc")
-    if colonne is None:
-        print(list(df.columns))
-    col_pourcentages = list(df[colonne])
-    for i in range(len(col_cat)):
-        p = convertir(col_pourcentages[i])
-        tranche = str(col_heures[i])
-        if col_cat[i] == type_jour and p is not None and tranche[0].isdigit() and col_noms[i] in numero_nom:
-            h = int(tranche.split("H")[0])
-            k = numero_nom[col_noms[i]]
-            if h < 24:
-                stations[k][h].append(moyennes[k] * p / 100)
+    df = df[(df["cat_jour"] == type_jour) & df["libelle_arret"].isin(noms)].copy()
+    df["heure"] = pd.to_numeric(df["trnc_horr_60"].str.extract(r"^(\d+)H", expand=False))  # "ND" -> NaN
+    df["pourcentage"] = convertir(df[colonne])
+    df = df.dropna(subset=["heure", "pourcentage"])
+
+    # Une station peut avoir plusieurs codes (RATP / SNCF) : on moyenne leurs profils.
+    pourcentages = df.pivot_table(index="libelle_arret", columns="heure", values="pourcentage", aggfunc="mean")
+    pourcentages = pourcentages.reindex(index=noms, columns=range(24)).fillna(0)
+    stations = pourcentages.mul(moyennes, axis=0) / 100
     return stations
 
 
 def validation_navigo_moyen_par_station(station, dates):
-    c = 0
-    for i in range(len(dates)):
-        c = c + sum(station[i])
-    moyenne = c / len(dates)
+    moyenne = station[dates].sum() / len(dates)
     return moyenne
 
 
-def validation_navigo_moyen_par_station_par_heure(station, heure):  # V2
-    validation = station[heure]
-    if len(validation) == 0:
-        return 0
-    moyenne_horaire = sum(validation) / len(validation)
-    return moyenne_horaire
-
-
 def top_stations_par_validation_par_heure(stations, heure):
-    D = []
-    for i in range(len(stations)):
-        D.append([validation_navigo_moyen_par_station_par_heure(stations[i], heure), i])
-    D.sort(reverse=True)
-    return D
+    return stations[heure].sort_values(ascending=False)
 
 
 def top_stations_par_validation(stations, dates):
-    D = []
-    for i in range(len(stations)):
-        D.append([validation_navigo_moyen_par_station(stations[i], dates), i])
-    D.sort(reverse=True)
-    return D
+    moyennes = stations.apply(validation_navigo_moyen_par_station, axis=1, args=(dates,))
+    return moyennes.sort_values(ascending=False)
 
 
 def concentration_des_validation_par_heure(stations, heure):
@@ -128,53 +69,55 @@ def concentration_des_validation_par_heure(stations, heure):
     return tuple_top_stations
 
 
-def tracer_top_stations(top, noms, n):
-    x = []
-    y = []
-    for i in range(min(n, len(top)) - 1, -1, -1):
-        x.append(noms[top[i][1]])
-        y.append(top[i][0])
-    plt.figure(figsize=(10, 6))
-    plt.barh(x, y)
-    plt.xlabel("Validations moyennes par jour")
-    plt.title("Stations les plus fréquentées")
-    plt.tight_layout()
-    plt.show()
+def charger_donnees_validations():
+    df_jour = charger(VALIDATIONS_JOUR)
+    df_heure = charger(VALIDATIONS_HEURE)
+    noms, dates, stations_jour = stations_par_jour(df_jour)
+
+    # Le profil horaire "JOHV" (jour ouvré hors vacances) s'applique à la moyenne
+    # des jours ouvrés, pas à celle de tous les jours (week-ends compris).
+    jours_ouvres = [d for d in dates if pd.Timestamp(d).dayofweek < 5]
+    moyennes = stations_jour.apply(validation_navigo_moyen_par_station, axis=1, args=(jours_ouvres,))
+    stations_heure = stations_par_heure(df_heure, noms, moyennes, "JOHV")
+
+    # Identifiant de zone (id_zdc) de chaque station, pour la relier aux lignes du réseau.
+    zones = df_jour.dropna(subset=["id_zdc"]).groupby("libelle_arret")["id_zdc"].first().astype(int)
+    return noms, dates, stations_jour, stations_heure, zones
+
+
+def tracer_top_stations(top, n):
+    top = top.head(n)[::-1]
+    fig = px.bar(
+        x=top.values,
+        y=top.index,
+        orientation="h",
+        labels={"x": "Validations moyennes par jour", "y": "Station"},
+        title="Stations les plus fréquentées",
+    )
+    fig.show()
 
 
 def tracer_profil_station(station, nom):
-    heures = []
-    valeurs = []
+    heures = [str(h) + "H" for h in range(24)]
+    fig = px.bar(
+        x=heures,
+        y=station.values,
+        labels={"x": "Heure", "y": "Validations estimées (jour ouvré)"},
+        title="Profil horaire : " + nom,
+    )
+    fig.show()
+
+
+if __name__ == "__main__":
+    noms, dates, stations_jour, stations_heure, zones = charger_donnees_validations()
+
+    top = top_stations_par_validation(stations_jour, dates)
+    for nom, valeur in top.head(10).items():
+        print(nom, round(valeur))
+
+    concentration = concentration_des_validation_par_heure(stations_heure, 24)
     for h in range(24):
-        heures.append(str(h) + "H")
-        valeurs.append(validation_navigo_moyen_par_station_par_heure(station, h))
-    plt.figure(figsize=(12, 5))
-    plt.bar(heures, valeurs)
-    plt.xlabel("Heure")
-    plt.ylabel("Validations estimées")
-    plt.title("Profil horaire : " + nom)
-    plt.tight_layout()
-    plt.show()
+        print(str(h) + "H", concentration[h].index[0])
 
-
-df_jour = charger(VALIDATIONS_JOUR)
-df_heure = charger(VALIDATIONS_HEURE)
-
-noms, dates, stations_jour = stations_par_jour(df_jour)
-
-moyennes = []
-for i in range(len(stations_jour)):
-    moyennes.append(validation_navigo_moyen_par_station(stations_jour[i], dates))
-
-stations_heure = stations_par_heure(df_heure, noms, moyennes, "JOHV")
-
-top = top_stations_par_validation(stations_jour, dates)
-for i in range(min(10, len(top))):
-    print(noms[top[i][1]], round(top[i][0]))
-
-concentration = concentration_des_validation_par_heure(stations_heure, 24)
-for h in range(24):
-    print(str(h) + "H", noms[concentration[h][0][1]])
-
-tracer_top_stations(top, noms, 10)
-tracer_profil_station(stations_heure[top[0][1]], noms[top[0][1]])
+    tracer_top_stations(top, 10)
+    tracer_profil_station(stations_heure.loc[top.index[0]], top.index[0])
